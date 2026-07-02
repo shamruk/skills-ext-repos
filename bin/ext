@@ -1,0 +1,4 @@
+#!/bin/sh
+# PATH-facing entry point for the ext-repos skill. All logic lives in scripts/ext.sh.
+d=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
+exec "$d/../scripts/ext.sh" "$@"
