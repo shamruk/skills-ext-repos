@@ -49,7 +49,8 @@ usage: ext <command> [args]
   relink            Realign mounts after a host branch switch.
   init              Scaffold the per-repo footprint in the current repo:
                     repos.json skeleton, .superset/{ext.sh,config.json},
-                    .gitignore entries. Idempotent; commit the result.
+                    .gitignore entries, and a short ext-repos note in
+                    CLAUDE.md. Idempotent; commit the result.
   doctor [--fix] [--migrate]
         Repair stale worktree registrations, orphaned matching branches,
         broken links, missing stores; --migrate converts legacy submodule
@@ -694,7 +695,28 @@ EOF
   if ! grep -qx '.superset/config.local.json' "$root/.gitignore" 2>/dev/null; then
     echo ".superset/config.local.json" >>"$root/.gitignore"
   fi
-  say "init done — edit repos.json, run 'ext link --all', then commit repos.json .superset/ .gitignore"
+  # short ext-repos note in CLAUDE.md so agents reading it know the model
+  local claude_md="$root/CLAUDE.md" claude_existed=0
+  [[ -f "$claude_md" ]] && claude_existed=1
+  if grep -qF '## External repos (ext-repos)' "$claude_md" 2>/dev/null; then
+    note "CLAUDE.md already documents ext-repos — left untouched"
+  else
+    {
+      ((claude_existed)) && [[ -s "$claude_md" ]] && echo ""
+      cat <<'EOF'
+## External repos (ext-repos)
+
+This repo can link sibling repos as **branch-aligned git worktrees** under
+`external/` (declared in `repos.json`). Linked dirs are gitignored and are
+**separate repos** — `git commit`/`git push` inside one applies to THAT repo,
+not this host. Link on demand with `ext link <name>` (or `ext link --all`);
+`ext status` shows branch/dirty/link state. Managed by the ext-repos skill.
+EOF
+    } >>"$claude_md"
+    ((claude_existed)) && say "documented ext-repos in CLAUDE.md" \
+      || say "created CLAUDE.md with an ext-repos note"
+  fi
+  say "init done — edit repos.json, run 'ext link --all', then commit repos.json .superset/ .gitignore CLAUDE.md"
 }
 
 # ----------------------------------------------------------------------- doctor

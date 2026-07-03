@@ -54,7 +54,7 @@ itself.
     ext relink                     # realign mounts after a host branch switch
     ext doctor [--fix] [--migrate] # repair stale/broken state; --migrate converts
                                    # git-submodule checkouts into links
-    ext init                       # scaffold repos.json + .superset hooks + .gitignore (idempotent)
+    ext init                       # scaffold repos.json + .superset hooks + .gitignore + CLAUDE.md note (idempotent)
 
 Exit codes: 0 ok, 1 error, 2 usage, 3 branch-checkout conflict, 4 refused
 (dirty or unpushed work — never override with --force on your own).
@@ -62,13 +62,15 @@ Exit codes: 0 ok, 1 error, 2 usage, 3 branch-checkout conflict, 4 refused
 ## Onboarding a repo (user asks to "set this repo up for ext-repos")
 
 1. Run `ext init` (safe on repos with existing files — it never overwrites).
+   It also appends a short "External repos (ext-repos)" note to `CLAUDE.md`
+   (creating it if absent) so agents reading the repo know the model.
 2. Edit `repos.json`: add each linkable repo as
    `{ "name": "<store dir in ~/dev/repos>", "mount": "external/<dir>", "url": "git@github.com:<org>/<repo>.git" }`
    (ask the user which repos if unclear; `autolink: false` for lazy ones).
 3. If a declared path is currently a git-submodule checkout, convert it with
    `ext doctor --migrate` — confirm with the user first.
-4. `ext link --all` to verify, then commit `repos.json`, `.superset/`, and
-   `.gitignore` changes.
+4. `ext link --all` to verify, then commit `repos.json`, `.superset/`,
+   `.gitignore`, and the `CLAUDE.md` note.
 
 ## Reading conflicts (exit code 3)
 
