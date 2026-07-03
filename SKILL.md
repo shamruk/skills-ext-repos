@@ -20,13 +20,10 @@ The model in one paragraph: `repos.json` at the host repo root declares
 linkable external repos; canonical stores live in `~/dev/repos/<name>`;
 `ext link` mounts each declared dir as a **git worktree** of its store,
 checked out at the host's current branch (created from `origin/<base>` —
-normally `dev` — when missing, and never pushed until asked). The first
-`ext link` of a repo whose store isn't cloned yet **clones it** from the
-manifest `url` (checkout-less) as part of linking — a lazy repo materializes
-in one step; you don't reach for `doctor`. Mount dirs are gitignored in the
-host. Superset runs `link --auto` / `unlink --all` in its workspace
-setup/teardown hooks, so eager (`autolink: true`) repos are just there; lazy
-ones are cloned-and-linked on demand.
+normally `dev` — when missing, and never pushed until asked). Mount dirs are
+gitignored in the host. Superset runs `link --auto` / `unlink --all` in its
+workspace setup/teardown hooks, so eager (`autolink: true`) repos are just
+there; lazy ones are linked on demand.
 
 Use `~/.claude/skills/ext-repos/scripts/ext.sh` as the ONLY interface (the
 `ext` command on PATH is the same script; the committed `.superset/ext.sh` in
@@ -39,12 +36,9 @@ itself.
 - A task touches files under a dir listed in the host's `repos.json`, but the
   dir is missing or `ext status` shows it on a branch different from the
   host's → run `ext link <dir-basename>` first, then proceed. Tell the user
-  you linked it. If the store isn't cloned yet (`ext status` says "not cloned
-  yet"), `ext link` clones it on demand — that's the clean path; do **not**
-  run `ext doctor --fix` to bootstrap a lazy repo (doctor is for repairing
-  broken state, not first-time materialization). The clone may hit the network.
-- Never unlink, prune, push, or pass `--force` unprompted. Linking (including
-  the on-demand clone of a not-yet-cloned store) is the only self-serve action.
+  you linked it.
+- Never unlink, prune, push, or pass `--force` unprompted. Linking is the
+  only self-serve action.
 
 ## Commands
 
@@ -103,6 +97,6 @@ that checkout, `--branch <other-name>`, or `--detach` (read-only). NEVER
 
 - `references/git-mechanics.md` — worktree layout, branch matching rules,
   store discovery order, what the manifest fields mean.
-- `references/troubleshooting.md` — recovery playbook: Superset deleted a
-  workspace without teardown; ".lock" races; materializing a not-yet-cloned
-  store (via `ext link`); detached or mismatched mounts; submodule migration.
+- `references/troubleshooting.md` — doctor playbook: Superset deleted a
+  workspace without teardown; ".lock" races; missing store on a new machine;
+  detached or mismatched mounts; submodule migration.

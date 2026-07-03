@@ -31,7 +31,6 @@ usage: ext <command> [args]
   link [mount…|--all|--auto] [--branch X] [--detach] [--no-fetch]
         Mount external repo(s) as worktrees at the host's current branch
         (created from origin/<base> when missing; never auto-pushed).
-        Clones the canonical store from its manifest url on first link.
         --auto links only repos with autolink=true (used by Superset setup).
   unlink [mount…|--all] [--force] [--keep-branch]
         Remove mount(s). Refuses dirty/unpushed unless --force. Deletes the
@@ -54,8 +53,8 @@ usage: ext <command> [args]
                     CLAUDE.md. Idempotent; commit the result.
   doctor [--fix] [--migrate]
         Repair stale worktree registrations, orphaned matching branches,
-        and broken links. Reports lazy (not-yet-cloned) stores — 'ext link'
-        clones those. --migrate converts legacy submodule checkouts into links.
+        broken links, missing stores; --migrate converts legacy submodule
+        checkouts into links.
   version | help
 
 Repos are addressed by mount basename (e.g. `ext link backend`) or full
@@ -126,23 +125,6 @@ canon_dir() { # name -> canonical store path on stdout
     fi
   done
   return 1
-}
-
-# Materialize a lazy canonical store: clone it into <reposRoot>/<name>,
-# checkout-less with a detached HEAD so its primary worktree owns no branch
-# (parity with Superset-created stores; lets any branch — including the repo's
-# default — be linked). This is on-demand first-time setup for a declared-but-
-# not-yet-cloned repo, NOT a repair: `ext link` calls it so a lazy repo links
-# in one step, without detouring through `ext doctor`.
-clone_store() { # name url -> clone into $REPOS_ROOT/$name; 0 ok, 1 fail, 2 no url
-  local name="$1" url="$2"
-  [[ -n "$url" ]] || return 2
-  mkdir -p "$REPOS_ROOT"
-  git clone --no-checkout "$url" "$REPOS_ROOT/$name" || return 1
-  # detach HEAD so the checkout-less primary worktree never owns a branch
-  git -C "$REPOS_ROOT/$name" update-ref --no-deref HEAD \
-    "$(git -C "$REPOS_ROOT/$name" rev-parse HEAD)" 2>/dev/null || true
-  return 0
 }
 
 host_base() {
@@ -226,73 +208,45 @@ try_worktree_add() { # <canon> <worktree-add args…>
 
 # ------------------------------------------------------------------------- link
 
-# A mount state that blocks linking regardless of the store — prints the fix
-# and returns 0 (handled). Returns 1 for non-blocking states (absent/empty-dir
-# are fine to link into; 'linked' is handled by the caller). These states are
-# canon-independent, so link_one can screen for them BEFORE cloning a lazy
-# store — a doomed link must not trigger a needless network clone.
-mount_blocked() { # state mount_rel -> 0 (err printed) if blocked, else 1
-  case "$1" in
-    legacy-submodule) err "$2: legacy submodule checkout — run 'ext doctor --migrate'" ;;
-    foreign-worktree) err "$2: is a worktree of a different repo — remove it manually, then re-run" ;;
-    clone)            err "$2: is a standalone clone — remove it manually, then re-run" ;;
-    occupied)         err "$2: directory exists and is not empty — remove it manually, then re-run" ;;
-    *) return 1 ;;
-  esac
-  return 0
-}
-
 link_one() { # idx (uses LINK_BRANCH_OVERRIDE, LINK_DETACH, LINK_NO_FETCH)
   local i="$1"
   local name="${R_NAME[$i]}" mount_rel="${R_MOUNT[$i]}" base="${R_BASE[$i]}"
   local m="$HOST_ROOT/$mount_rel"
   local want="${LINK_BRANCH_OVERRIDE:-$HOST_BRANCH}"
-  local canon cur owner just_cloned=false
+  local canon cur owner
   if ! canon="$(canon_dir "$name")"; then
-    # Lazy reference: declared in repos.json but never cloned. Materialize the
-    # store on demand — normal first-time setup, not a repair to hand to doctor.
-    # But first screen the mount: if it's already occupied by something we can't
-    # link over, fail fast WITHOUT cloning (no wasted network on a doomed link).
-    # $REPOS_ROOT/$name doesn't exist yet, so a worktree mount reads as foreign.
-    if mount_blocked "$(mount_state "$m" "$REPOS_ROOT/$name")" "$mount_rel"; then
-      return 1
-    fi
-    local url="${R_URL[$i]}"
-    if [[ -z "$url" ]]; then
-      err "$name: no canonical store under $REPOS_ROOT and no 'url' in repos.json to clone from"
-      err "  add a \"url\" to its repos.json entry, or clone it yourself into $REPOS_ROOT/$name"
-      return 1
-    fi
-    note "$name: first link — cloning store into $REPOS_ROOT/$name"
-    if clone_store "$name" "$url"; then
-      say "  + cloned $name (store HEAD detached — checkout-less)"
-    else
-      err "$name: clone from $url failed (see git output above)"
-      err "  a leftover/partial $REPOS_ROOT/$name, a bad url, or being offline can cause this"
-      return 1
-    fi
-    canon="$(canon_dir "$name")" || { err "$name: cloned but store not found at $REPOS_ROOT/$name"; return 1; }
-    just_cloned=true
-  fi
-  local state
-  state="$(mount_state "$m" "$canon")"
-  if [[ "$state" == "linked" ]]; then
-    cur="$(git -C "$m" symbolic-ref --short -q HEAD || echo '(detached)')"
-    if [[ "$cur" == "$want" ]]; then
-      note "$mount_rel: already linked ($name @ $cur)"
-      return 0
-    fi
-    if [[ -n "$LINK_BRANCH_OVERRIDE" ]]; then
-      err "$mount_rel: already linked on '$cur' — to move it: ext unlink $(basename "$mount_rel") && ext link $(basename "$mount_rel") --branch $want"
-      return 1
-    fi
-    warn "$mount_rel: linked but on '$cur' while host wants '$want' — run 'ext relink'"
-    return 0
-  elif mount_blocked "$state" "$mount_rel"; then
+    err "$name: canonical store not found under $REPOS_ROOT"
+    err "  fix: ext doctor --fix   (clones ${R_URL[$i]:-<no url in manifest>})"
     return 1
   fi
+  case "$(mount_state "$m" "$canon")" in
+    linked)
+      cur="$(git -C "$m" symbolic-ref --short -q HEAD || echo '(detached)')"
+      if [[ "$cur" == "$want" ]]; then
+        note "$mount_rel: already linked ($name @ $cur)"
+        return 0
+      fi
+      if [[ -n "$LINK_BRANCH_OVERRIDE" ]]; then
+        err "$mount_rel: already linked on '$cur' — to move it: ext unlink $(basename "$mount_rel") && ext link $(basename "$mount_rel") --branch $want"
+        return 1
+      fi
+      warn "$mount_rel: linked but on '$cur' while host wants '$want' — run 'ext relink'"
+      return 0 ;;
+    legacy-submodule)
+      err "$mount_rel: legacy submodule checkout — run 'ext doctor --migrate'"
+      return 1 ;;
+    foreign-worktree)
+      err "$mount_rel: is a worktree of a different repo — remove it manually, then re-run"
+      return 1 ;;
+    clone)
+      err "$mount_rel: is a standalone clone — remove it manually, then re-run"
+      return 1 ;;
+    occupied)
+      err "$mount_rel: directory exists and is not empty — remove it manually, then re-run"
+      return 1 ;;
+  esac
   git -C "$canon" worktree prune --expire=now 2>/dev/null || true # self-heal stale registrations
-  if [[ "$just_cloned" != "true" && "${R_FETCH[$i]}" == "true" && "$LINK_NO_FETCH" != "true" ]]; then
+  if [[ "${R_FETCH[$i]}" == "true" && "$LINK_NO_FETCH" != "true" ]]; then
     git -C "$canon" fetch origin --prune --quiet 2>/dev/null \
       || warn "$name: fetch failed (offline?) — using local refs"
   fi
@@ -458,11 +412,7 @@ cmd_status() {
     local m="$HOST_ROOT/$mount_rel"
     local canon state
     if ! canon="$(canon_dir "$name")"; then
-      if [[ -n "${R_URL[$i]}" ]]; then
-        say "== $mount_rel ($name): not linked (store not cloned yet — 'ext link $(basename "$mount_rel")' clones it)"
-      else
-        say "== $mount_rel ($name): store MISSING and no url in repos.json to clone from — ext doctor"
-      fi
+      say "== $mount_rel ($name): canonical store MISSING — ext doctor --fix"
       continue
     fi
     state="$(mount_state "$m" "$canon")"
@@ -674,14 +624,7 @@ cmd_relink() {
       fi
       link_one "$i" || rc=$?
     elif [[ "${R_AUTOLINK[$i]}" == "true" ]]; then
-      # relink realigns existing mounts; it does not materialize lazy stores.
-      # Only link an autolink repo whose store is already cloned — never trigger
-      # a network clone from a routine 'ext relink' (use 'ext link' for that).
-      if canon_dir "${R_NAME[$i]}" >/dev/null 2>&1; then
-        link_one "$i" || rc=$?
-      else
-        note "${R_MOUNT[$i]}: autolink but store not cloned — 'ext link $(basename "${R_MOUNT[$i]}")' materializes it (relink won't clone)"
-      fi
+      link_one "$i" || rc=$?
     fi
   done
   return $rc
@@ -793,16 +736,19 @@ cmd_doctor() {
     local m="$HOST_ROOT/$mount_rel"
     local canon
     if ! canon="$(canon_dir "$name")"; then
-      # A declared-but-not-cloned store is a lazy reference, not a defect:
-      # 'ext link' clones it on demand. Doctor reports, but does not clone
-      # (materialization belongs to link). Only a store that can never be
-      # cloned — no url in the manifest — is a real configuration issue.
-      if [[ -n "$url" ]]; then
-        say "o $name: store not cloned yet (lazy) — 'ext link $(basename "$mount_rel")' clones it on demand"
+      issues=$((issues + 1))
+      say "x $name: canonical store missing under $REPOS_ROOT"
+      if [[ "$fix" == "true" && -n "$url" ]]; then
+        if git clone --no-checkout "$url" "$REPOS_ROOT/$name"; then
+          # detach the store's HEAD so its checkout-less primary worktree
+          # never owns a branch (which would block linking that branch)
+          git -C "$REPOS_ROOT/$name" update-ref --no-deref HEAD \
+            "$(git -C "$REPOS_ROOT/$name" rev-parse HEAD)" 2>/dev/null || true
+          say "  + cloned $url (store HEAD detached — checkout-less)"
+          fixed=$((fixed + 1))
+        fi
       else
-        issues=$((issues + 1))
-        say "x $name: no canonical store under $REPOS_ROOT and no 'url' in repos.json to clone from"
-        say "  fix: add a \"url\" to its repos.json entry, then 'ext link $(basename "$mount_rel")'"
+        say "  fix: ext doctor --fix   (clones ${url:-<no url in manifest>})"
       fi
       continue
     fi

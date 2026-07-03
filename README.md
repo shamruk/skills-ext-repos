@@ -3,11 +3,10 @@
 External sibling repos as **matching-branch git worktrees**. One canonical
 store per repo (e.g. `~/dev/repos/acme-backend`, checkout-less); every host
 worktree that needs it gets a lightweight `git worktree` mount that shares
-the store's objects and refs. Sub-second setup with no network once a store
-exists (the first link of a not-yet-cloned repo clones it from its manifest
-`url`), one fetch serves every checkout, and each mount is branch-aligned
-with its host — a feature branch in the app repo gets the same-named branch
-in every linked repo.
+the store's objects and refs. Sub-second setup with no network, one fetch
+serves every checkout, and each mount is branch-aligned with its host — a
+feature branch in the app repo gets the same-named branch in every linked
+repo.
 
 ## How it works
 
@@ -30,9 +29,7 @@ in every linked repo.
 - `ext link` mounts each repo at `mount` as a worktree of
   `<reposRoot>/<name>`, on a branch **named after the host's current branch**:
   existing local branch → used; `origin/<branch>` → tracked; neither → created
-  from `origin/<base>` with `--no-track` (stays local until `ext push`). If the
-  store isn't cloned yet, the first link clones it from the manifest `url`
-  (checkout-less, detached HEAD) — a lazy repo materializes in one step.
+  from `origin/<base>` with `--no-track` (stays local until `ext push`).
 - Mount dirs are **gitignored** in the host (`/external/`).
 - Superset integration: each repo commits `.superset/config.json` whose
   `setup` runs `sh .superset/ext.sh link --auto` and whose `teardown` runs
@@ -71,7 +68,7 @@ Already-linked worktrees keep working as plain git worktrees without the skill.
 | `ext merge-to <target> [--dry-run]` | rebase onto `origin/<target>`, push `HEAD:<target>` — no checkout of target |
 | `ext each -- <cmd>` | run cmd in host + every mount |
 | `ext relink` | realign mounts after a host branch switch |
-| `ext doctor [--fix] [--migrate]` | repair stale registrations, orphaned branches, broken links; report not-yet-cloned (lazy) stores; convert submodule checkouts |
+| `ext doctor [--fix] [--migrate]` | repair stale registrations, orphaned branches, broken links; convert submodule checkouts |
 | `ext init` | scaffold the per-repo footprint (repos.json skeleton, `.superset/` hooks, `.gitignore`) — idempotent |
 
 ## Per-repo footprint (committed)

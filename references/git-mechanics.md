@@ -17,12 +17,6 @@
 
 Host on branch `B`, manifest base `<base>` (default `dev`):
 
-0. **Store missing?** If `<reposRoot>/<name>` isn't cloned yet, clone it from
-   the manifest `url` with `git clone --no-checkout`, then detach its HEAD so
-   the checkout-less primary worktree owns no branch. This makes the first
-   `ext link` of a lazy repo a one-step materialize-and-link; no `url` and no
-   store → hard error (nothing to clone). Freshly cloned stores skip the fetch
-   in step 2 (their refs are already current).
 1. `git worktree prune --expire=now` in the store (self-heals registrations
    left by workspaces deleted without teardown).
 2. Fetch `origin --prune` (unless `fetch: false` or `--no-fetch`); offline is
@@ -79,5 +73,5 @@ GC'd. `--keep-branch` skips GC.
 | `defaults.fetch` | fetch store before resolving branches | `true` |
 | `repos[].name` | store dir name + GitHub repo name | required |
 | `repos[].mount` | host-relative mount path | required |
-| `repos[].url` | clone URL — `ext link` clones the store from it on first link | optional (required to auto-clone a lazy store) |
+| `repos[].url` | clone URL, used only by `doctor --fix` bootstrap | optional |
 | `repos[].base/autolink/fetch` | per-repo overrides | inherit |
