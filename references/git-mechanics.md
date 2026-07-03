@@ -9,9 +9,21 @@
   `git -C <store> worktree add …`. Its `.git` is a *file* containing
   `gitdir: <store>/.git/worktrees/<id>`. All worktrees of one store share
   objects and refs: a fetch anywhere updates everyone; `gc` runs once.
-- Store discovery order: `$EXT_REPOS_STORE` → manifest `reposRoot` →
-  `dirname $SUPERSET_ROOT_PATH` (set inside Superset hooks). First candidate
-  where `<dir>/<name>` is a git repo wins.
+- Store discovery: search each root — `$EXT_REPOS_STORE` → manifest `reposRoot`
+  → `dirname $SUPERSET_ROOT_PATH` (set inside Superset hooks) — for the store
+  under any of several **candidate directory names**, most-likely first:
+  1. the repo's git name (basename of `url`, e.g. `vocalist-flutter-app`) —
+     what `git clone <url>` produces by default, so this is the usual hit;
+  2. `owner-repo` flattened, then `owner/repo` nested (org-organized layouts);
+  3. the manifest `name` (an explicit alias / back-compat fallback).
+  When a `url` is set, a **strict** first pass takes only a candidate whose
+  `origin` remote matches that url (normalized across ssh/https/scp, port- and
+  case-insensitive) — so a same-named unrelated dir never shadows the real
+  store. If nothing matches, a **lenient** pass then accepts the first candidate
+  that is a git repo regardless of origin, recovering a store with no origin, an
+  ssh host-alias clone, or a fork. With no `url`, only the lenient pass runs
+  (name-based, as before). This is why a store cloned under its git name is
+  found even when `name` differs from it.
 
 ## Branch resolution (link)
 
@@ -71,7 +83,7 @@ GC'd. `--keep-branch` skips GC.
 | `defaults.base` | branch new matching branches fork from | `dev` |
 | `defaults.autolink` | linked by `link --auto` (Superset setup) | `true` |
 | `defaults.fetch` | fetch store before resolving branches | `true` |
-| `repos[].name` | store dir name + GitHub repo name | required |
+| `repos[].name` | identifier + fallback store-dir name (stores are normally found by their git name from `url`, not this) | required |
 | `repos[].mount` | host-relative mount path | required |
-| `repos[].url` | clone URL, used only by `doctor --fix` bootstrap | optional |
+| `repos[].url` | clone URL — used to locate the store (candidate names + origin match) and to clone it in `doctor --fix` | recommended |
 | `repos[].base/autolink/fetch` | per-repo overrides | inherit |

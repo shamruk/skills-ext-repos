@@ -41,7 +41,19 @@ Same as above — the store still has the registration. `ext link` self-heals;
 ## Canonical store missing (new machine)
 
 `ext doctor --fix` clones it from the manifest `url` with
-`git clone --no-checkout` into `<reposRoot>/<name>`.
+`git clone --no-checkout` into `<reposRoot>/<git-name>` (the repo's git name,
+e.g. `vocalist-flutter-app`), HEAD detached.
+
+## "Store missing" but the repo IS already in `~/dev/repos`
+
+Almost always a name mismatch: the manifest `name` is an alias
+(e.g. `mobile-app`) while the store on disk is under its **git name**
+(e.g. `vocalist-flutter-app`, from `git clone`'s default). The lookup derives
+candidate dir names from `url` (git name, `owner-repo`, `owner/repo`) and only
+then falls back to `name`, verifying each candidate's `origin` remote matches
+`url`. So set a correct `url` and the existing store is found — no need for
+`doctor` and no duplicate clone. If it's still missing, check that the store's
+`origin` actually points at `url` (`git -C <store> remote get-url origin`).
 
 ## `.lock` errors during concurrent links
 

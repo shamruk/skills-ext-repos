@@ -115,14 +115,72 @@ repo_index() { # selector (mount basename | mount path | name) -> index on stdou
   return 1
 }
 
-canon_dir() { # name -> canonical store path on stdout
-  local name="$1" c
-  for c in "${EXT_REPOS_STORE:-}" "$REPOS_ROOT" "${SUPERSET_ROOT_PATH:+$(dirname "$SUPERSET_ROOT_PATH")}"; do
-    [[ -n "$c" && -d "$c/$name" ]] || continue
-    if git -C "$c/$name" rev-parse --git-dir >/dev/null 2>&1; then
-      printf '%s' "$c/$name"
-      return 0
-    fi
+# Reduce a git remote URL to host/owner/.../repo — scheme, user@, and any ssh
+# :PORT stripped; scp `host:path` colon turned to `/`; .git and trailing
+# slashes removed in git's own order (strip slashes, then one .git, then
+# slashes) so parsing matches the directory `git clone <url>` would create.
+url_hostpath() { # url -> host/owner/.../repo (no case fold)
+  local u="$1" hp
+  while [[ "$u" == */ ]]; do u="${u%/}"; done   # git strips trailing slashes first,
+  u="${u%.git}"                                 # then a single .git,
+  while [[ "$u" == */ ]]; do u="${u%/}"; done   # then any slashes it exposed
+  u="${u#ssh://}"; u="${u#git+ssh://}"; u="${u#https://}"; u="${u#http://}"; u="${u#git://}"
+  u="${u#*@}"                                   # strip user@ (e.g. git@)
+  case "$u" in                                  # drop an ssh :PORT before the path
+    *:[0-9]*/*) hp="${u%%/*}"; [[ "${hp#*:}" =~ ^[0-9]+$ ]] && u="${hp%%:*}/${u#*/}" ;;
+  esac
+  printf '%s' "$u" | tr ':' '/'                 # scp host:path -> host/path
+}
+
+# Normalize a URL for comparison: url_hostpath, lowercased. ssh/https/scp forms
+# of one remote compare equal. Used to confirm a candidate store is that repo.
+norm_url() { # url -> normalized id on stdout
+  url_hostpath "$1" | tr '[:upper:]' '[:lower:]'
+}
+
+# Candidate store directory names for a repo, most-likely first. A store is
+# normally cloned under its git repo name (git clone's default), which need NOT
+# equal the manifest 'name'. So derive candidates from the url — repo basename,
+# then owner-repo flattened, then owner/repo nested — and fall back to 'name'.
+store_candidates() { # name url -> one candidate dir name per line
+  local name="$1" url="$2" p
+  if [[ -n "$url" ]]; then
+    p="$(url_hostpath "$url")"; p="${p#*/}"     # host/owner/.../repo -> owner/.../repo
+    printf '%s\n' "${p##*/}"     # 1) repo basename        (e.g. vocalist-flutter-app)
+    printf '%s\n' "${p//\//-}"   # 2) owner-repo flattened (e.g. Org-repo, Org-sub-repo)
+    printf '%s\n' "$p"           # 3) owner/repo nested    (e.g. Org/repo)
+  fi
+  [[ -n "$name" ]] && printf '%s\n' "$name"   # 4) manifest name (explicit alias / back-compat)
+}
+
+# Resolve a repo's canonical store. Searches each store root (EXT_REPOS_STORE,
+# reposRoot, Superset parent) for a candidate dir name (see store_candidates)
+# that is a git repo. When a url is given, a strict first pass takes only a
+# candidate whose origin remote matches that url (normalized) — so a same-named
+# unrelated dir never shadows the real store; a lenient second pass then accepts
+# the first candidate regardless of origin, which recovers a store with no
+# origin, an ssh host-alias, or a fork. With no url there's nothing to match, so
+# the single lenient pass reproduces the old name-based lookup.
+canon_dir() { # name [url] -> canonical store path on stdout
+  local name="$1" url="${2:-}" root cand path want="" got pass
+  [[ -n "$url" ]] && want="$(norm_url "$url")"
+  for pass in strict lenient; do
+    [[ "$pass" == strict && -z "$want" ]] && continue
+    for root in "${EXT_REPOS_STORE:-}" "$REPOS_ROOT" "${SUPERSET_ROOT_PATH:+$(dirname "$SUPERSET_ROOT_PATH")}"; do
+      [[ -n "$root" ]] || continue
+      while IFS= read -r cand; do
+        [[ -n "$cand" ]] || continue
+        path="$root/$cand"
+        [[ -d "$path" ]] || continue
+        git -C "$path" rev-parse --git-dir >/dev/null 2>&1 || continue
+        if [[ "$pass" == strict ]]; then
+          got="$(git -C "$path" remote get-url origin 2>/dev/null || true)"
+          [[ -n "$got" && "$(norm_url "$got")" == "$want" ]] || continue
+        fi
+        printf '%s' "$path"
+        return 0
+      done < <(store_candidates "$name" "$url")
+    done
   done
   return 1
 }
@@ -154,7 +212,7 @@ mount_state() { # <abs mount> <canon> -> absent|empty-dir|linked|foreign-worktre
 
 is_linked() { # idx
   local canon
-  canon="$(canon_dir "${R_NAME[$1]}")" || return 1
+  canon="$(canon_dir "${R_NAME[$1]}" "${R_URL[$1]}")" || return 1
   [[ "$(mount_state "$HOST_ROOT/${R_MOUNT[$1]}" "$canon")" == "linked" ]]
 }
 
@@ -214,7 +272,7 @@ link_one() { # idx (uses LINK_BRANCH_OVERRIDE, LINK_DETACH, LINK_NO_FETCH)
   local m="$HOST_ROOT/$mount_rel"
   local want="${LINK_BRANCH_OVERRIDE:-$HOST_BRANCH}"
   local canon cur owner
-  if ! canon="$(canon_dir "$name")"; then
+  if ! canon="$(canon_dir "$name" "${R_URL[$i]}")"; then
     err "$name: canonical store not found under $REPOS_ROOT"
     err "  fix: ext doctor --fix   (clones ${R_URL[$i]:-<no url in manifest>})"
     return 1
@@ -332,7 +390,7 @@ unlink_one() { # idx force keep_branch
   local name="${R_NAME[$i]}" mount_rel="${R_MOUNT[$i]}" base="${R_BASE[$i]}"
   local m="$HOST_ROOT/$mount_rel"
   local canon state br
-  canon="$(canon_dir "$name")" || { warn "$mount_rel: canonical store missing; skipping"; return 0; }
+  canon="$(canon_dir "$name" "${R_URL[$i]}")" || { warn "$mount_rel: canonical store missing; skipping"; return 0; }
   state="$(mount_state "$m" "$canon")"
   if [[ "$state" != "linked" ]]; then
     if [[ "$state" == "absent" ]]; then note "$mount_rel: not linked"; else warn "$mount_rel: not a linked worktree ($state); skipping"; fi
@@ -411,7 +469,7 @@ cmd_status() {
     local name="${R_NAME[$i]}" mount_rel="${R_MOUNT[$i]}" base="${R_BASE[$i]}"
     local m="$HOST_ROOT/$mount_rel"
     local canon state
-    if ! canon="$(canon_dir "$name")"; then
+    if ! canon="$(canon_dir "$name" "${R_URL[$i]}")"; then
       say "== $mount_rel ($name): canonical store MISSING — ext doctor --fix"
       continue
     fi
@@ -460,7 +518,7 @@ cmd_fetch() {
   git -C "$HOST_ROOT" fetch origin --prune &
   pids+=($!); labels+=("$HOST_NAME")
   for i in $(repo_seq); do
-    canon="$(canon_dir "${R_NAME[$i]}")" || continue
+    canon="$(canon_dir "${R_NAME[$i]}" "${R_URL[$i]}")" || continue
     case "$seen" in *" $canon "*) continue ;; esac
     seen="$seen$canon "
     git -C "$canon" fetch origin --prune &
@@ -610,7 +668,7 @@ cmd_relink() {
         continue
       fi
       [[ "$br" == "$HOST_BRANCH" ]] && continue
-      canon="$(canon_dir "${R_NAME[$i]}")" || continue
+      canon="$(canon_dir "${R_NAME[$i]}" "${R_URL[$i]}")" || continue
       owner="$(owner_of_branch "$canon" "$HOST_BRANCH")"
       if [[ -n "$owner" ]]; then
         warn "${R_MOUNT[$i]}: '$HOST_BRANCH' is already checked out at $owner — left on '$br'"
@@ -735,16 +793,28 @@ cmd_doctor() {
     local name="${R_NAME[$i]}" mount_rel="${R_MOUNT[$i]}" url="${R_URL[$i]}"
     local m="$HOST_ROOT/$mount_rel"
     local canon
-    if ! canon="$(canon_dir "$name")"; then
+    if ! canon="$(canon_dir "$name" "$url")"; then
       issues=$((issues + 1))
       say "x $name: canonical store missing under $REPOS_ROOT"
       if [[ "$fix" == "true" && -n "$url" ]]; then
-        if git clone --no-checkout "$url" "$REPOS_ROOT/$name"; then
+        # clone under the repo's git name (canon_dir's first candidate), not the
+        # manifest 'name' — keeps every store named after its remote, so the
+        # lookup finds it and no alias-named duplicate is ever created.
+        # (read from a process sub, not `| head`: no SIGPIPE abort under pipefail.)
+        local dest=""
+        IFS= read -r dest < <(store_candidates "$name" "$url") || true
+        [[ -n "$dest" ]] || dest="$name"   # guard a degenerate url
+        if [[ -e "$REPOS_ROOT/$dest" ]]; then
+          # a dir is already there but canon_dir didn't accept it (not a git repo,
+          # or origin doesn't match url) — don't clone over it; tell the user.
+          say "  ! $REPOS_ROOT/$dest already exists but isn't a usable store for $url"
+          say "    check its 'origin' (git -C $REPOS_ROOT/$dest remote get-url origin) or set the manifest url to match"
+        elif git clone --no-checkout "$url" "$REPOS_ROOT/$dest"; then
           # detach the store's HEAD so its checkout-less primary worktree
           # never owns a branch (which would block linking that branch)
-          git -C "$REPOS_ROOT/$name" update-ref --no-deref HEAD \
-            "$(git -C "$REPOS_ROOT/$name" rev-parse HEAD)" 2>/dev/null || true
-          say "  + cloned $url (store HEAD detached — checkout-less)"
+          git -C "$REPOS_ROOT/$dest" update-ref --no-deref HEAD \
+            "$(git -C "$REPOS_ROOT/$dest" rev-parse HEAD)" 2>/dev/null || true
+          say "  + cloned $url into $REPOS_ROOT/$dest (store HEAD detached — checkout-less)"
           fixed=$((fixed + 1))
         fi
       else

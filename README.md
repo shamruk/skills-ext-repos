@@ -26,10 +26,14 @@ repo.
 
   Per-repo overrides: `base`, `autolink` (eager vs lazy), `fetch`.
 
-- `ext link` mounts each repo at `mount` as a worktree of
-  `<reposRoot>/<name>`, on a branch **named after the host's current branch**:
-  existing local branch → used; `origin/<branch>` → tracked; neither → created
-  from `origin/<base>` with `--no-track` (stays local until `ext push`).
+- `ext link` mounts each repo as a worktree of its canonical store, on a branch
+  **named after the host's current branch**: existing local branch → used;
+  `origin/<branch>` → tracked; neither → created from `origin/<base>` with
+  `--no-track` (stays local until `ext push`). The store is located under
+  `reposRoot` by the repo's **git name** (from `url`) — falling back to
+  `owner/repo`, `owner-repo`, then the manifest `name` — and confirmed by
+  matching its `origin` remote, so a store you already cloned (under its git
+  name) is reused rather than re-cloned under `name`.
 - Mount dirs are **gitignored** in the host (`/external/`).
 - Superset integration: each repo commits `.superset/config.json` whose
   `setup` runs `sh .superset/ext.sh link --auto` and whose `teardown` runs

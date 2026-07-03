@@ -17,8 +17,11 @@ description: >-
 # ext-repos
 
 The model in one paragraph: `repos.json` at the host repo root declares
-linkable external repos; canonical stores live in `~/dev/repos/<name>`;
-`ext link` mounts each declared dir as a **git worktree** of its store,
+linkable external repos; canonical stores live under `~/dev/repos/` (found by
+the repo's **git name** from its `url` — e.g. `~/dev/repos/acme-backend` — with
+the manifest `name` only an alias/fallback, so a store you already cloned is
+reused, not re-cloned under a different name); `ext link` mounts each declared
+dir as a **git worktree** of its store,
 checked out at the host's current branch (created from `origin/<base>` —
 normally `dev` — when missing, and never pushed until asked). Mount dirs are
 gitignored in the host. Superset runs `link --auto` / `unlink --all` in its
@@ -65,8 +68,11 @@ Exit codes: 0 ok, 1 error, 2 usage, 3 branch-checkout conflict, 4 refused
    It also appends a short "External repos (ext-repos)" note to `CLAUDE.md`
    (creating it if absent) so agents reading the repo know the model.
 2. Edit `repos.json`: add each linkable repo as
-   `{ "name": "<store dir in ~/dev/repos>", "mount": "external/<dir>", "url": "git@github.com:<org>/<repo>.git" }`
-   (ask the user which repos if unclear; `autolink: false` for lazy ones).
+   `{ "name": "<identifier>", "mount": "external/<dir>", "url": "git@github.com:<org>/<repo>.git" }`
+   — always set `url`: the store is located by the repo's git name derived from
+   it (and cloned under that name), so `name` is just an identifier/alias, not
+   the on-disk dir. Ask the user which repos if unclear; `autolink: false` for
+   lazy ones.
 3. If a declared path is currently a git-submodule checkout, convert it with
    `ext doctor --migrate` — confirm with the user first.
 4. `ext link --all` to verify, then commit `repos.json`, `.superset/`,
