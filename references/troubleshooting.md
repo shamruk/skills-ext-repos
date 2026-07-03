@@ -19,8 +19,8 @@ its HEAD points at (usually `main`), so a writable mount of that branch is
 impossible by git's one-checkout-per-branch rule. `ext` prints a specialized
 message. Use `ext link <dir> --detach` (read-only at the tip — the normal
 want for base/release branches), or work on a feature branch. Stores that
-`ext doctor --fix` clones itself are created with a detached HEAD and don't
-have this limitation.
+`ext` clones itself (on first link) are created with a detached HEAD and
+don't have this limitation.
 
 ## Superset deleted a workspace without running teardown
 
@@ -38,10 +38,15 @@ Same as above — the store still has the registration. `ext link` self-heals;
 
 `ext doctor --fix` runs `git worktree repair` against the store.
 
-## Canonical store missing (new machine)
+## Canonical store missing (new machine, or a lazy repo's first use)
 
-`ext doctor --fix` clones it from the manifest `url` with
-`git clone --no-checkout` into `<reposRoot>/<name>`.
+`ext link <dir>` clones it from the manifest `url` with
+`git clone --no-checkout` into `<reposRoot>/<name>` (checkout-less, detached
+HEAD) as part of linking — a not-yet-cloned repo materializes in one step.
+`ext link --all` does this for every declared repo. `ext status` reports such
+a repo as "not cloned yet"; `ext doctor` reports it too but does **not** clone
+(materialization belongs to `link`, not the repair tool). A missing store with
+no `url` in the manifest is the one real error — there's nothing to clone from.
 
 ## `.lock` errors during concurrent links
 
