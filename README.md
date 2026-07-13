@@ -63,7 +63,8 @@ Already-linked worktrees keep working as plain git worktrees without the skill.
 
 | Command | Does |
 |---|---|
-| `ext status` / `ext list` | host + mounts: branch, dirty, ahead/behind base / manifest state |
+| `ext status` | Host + mounts: branch, dirty, ahead/behind base (`+ahead` green and `-behind` red in a terminal; set `NO_COLOR=1` to disable) |
+| `ext list` | Manifest entries and link state |
 | `ext link [dir\|--all\|--auto] [--branch X] [--detach] [--no-fetch]` | mount worktree(s) at the matching branch |
 | `ext unlink [dir\|--all] [--force] [--keep-branch]` | remove mount(s); prunes branches with no real commits |
 | `ext fetch` | fetch host + all stores in parallel (one fetch serves every worktree) |

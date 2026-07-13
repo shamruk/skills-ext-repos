@@ -22,6 +22,15 @@ warn() { printf 'ext: warning: %s\n' "$*" >&2; }
 err()  { printf 'ext: error: %s\n' "$*" >&2; }
 die()  { err "$1"; exit "${2:-1}"; }
 
+# Keep redirected output stable for scripts; decorate status deltas only when
+# a human is looking at a capable terminal. NO_COLOR is the standard opt-out.
+C_GREEN="" C_RED="" C_RESET=""
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
+  C_GREEN=$'\033[32m'
+  C_RED=$'\033[31m'
+  C_RESET=$'\033[0m'
+fi
+
 usage() {
   cat <<'EOF'
 ext — external repos as matching-branch git worktrees (manifest: repos.json)
@@ -461,9 +470,24 @@ cmd_unlink() {
 
 # ----------------------------------------------------------------- status / list
 
+status_base_extra() { # dir base -> divergence summary (no newline)
+  local d="$1" base="$2" behind=0 ahead=0 extra=""
+  if git -C "$d" rev-parse --verify -q "origin/$base" >/dev/null 2>&1; then
+    read -r behind ahead <<<"$(git -C "$d" rev-list --left-right --count "origin/$base...HEAD")"
+    extra=" | ${C_GREEN}+$ahead${C_RESET}/${C_RED}-$behind${C_RESET} vs origin/$base"
+  fi
+  printf '%s' "$extra"
+}
+
+print_short_branch_status() { # dir
+  git -C "$1" status -sb | sed 's/^/  /'
+}
+
 cmd_status() {
-  say "== $HOST_NAME @ ${HOST_BRANCH:-(detached)}"
-  git -C "$HOST_ROOT" status -sb | sed 's/^/  /'
+  local host_extra
+  host_extra="$(status_base_extra "$HOST_ROOT" "$(host_base)")"
+  say "== $HOST_NAME @ ${HOST_BRANCH:-(detached)}$host_extra"
+  print_short_branch_status "$HOST_ROOT"
   local i
   for i in $(repo_seq); do
     local name="${R_NAME[$i]}" mount_rel="${R_MOUNT[$i]}" base="${R_BASE[$i]}"
@@ -481,20 +505,13 @@ cmd_status() {
       say "== $mount_rel ($name): $state (!) — see 'ext doctor'"
       continue
     fi
-    local br dirty behind=0 ahead=0 up extra=""
+    local br extra
     br="$(git -C "$m" symbolic-ref --short -q HEAD || echo '(detached)')"
-    dirty="$(git -C "$m" status --porcelain | wc -l | tr -d ' ')"
-    if git -C "$m" rev-parse --verify -q "origin/$base" >/dev/null 2>&1; then
-      read -r behind ahead <<<"$(git -C "$m" rev-list --left-right --count "origin/$base...HEAD")"
-      extra=" | +$ahead/-$behind vs origin/$base"
-    fi
-    up="$(git -C "$m" rev-parse --verify -q --abbrev-ref '@{upstream}' 2>/dev/null || true)"
-    [[ -n "$up" ]] && extra="$extra | upstream $up"
-    [[ "$dirty" != "0" ]] && extra="$extra | DIRTY($dirty)"
+    extra="$(status_base_extra "$m" "$base")"
     [[ "$br" == "(detached)" ]] && extra="$extra | (!) detached"
     [[ -n "$HOST_BRANCH" && "$br" != "(detached)" && "$br" != "$HOST_BRANCH" ]] && extra="$extra | (!) differs from host branch — ext relink"
     say "== $mount_rel ($name) @ $br$extra"
-    git -C "$m" status -s | awk 'NR<=20{print "  " $0}' # awk drains stdin: no SIGPIPE under pipefail
+    print_short_branch_status "$m"
   done
 }
 
