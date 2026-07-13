@@ -46,6 +46,7 @@ itself.
 ## Commands
 
     ext status                     # host + each mount: branch, dirty, ahead/behind base
+    ext s                          # short alias for ext status
     ext list                       # manifest entries and link state
     ext link [<dir>|--all|--auto] [--branch X] [--detach] [--no-fetch]
     ext unlink [<dir>|--all] [--force] [--keep-branch]

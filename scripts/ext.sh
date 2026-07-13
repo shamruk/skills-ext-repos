@@ -22,13 +22,15 @@ warn() { printf 'ext: warning: %s\n' "$*" >&2; }
 err()  { printf 'ext: error: %s\n' "$*" >&2; }
 die()  { err "$1"; exit "${2:-1}"; }
 
-# Keep redirected output stable for scripts; decorate status deltas only when
-# a human is looking at a capable terminal. NO_COLOR is the standard opt-out.
-C_GREEN="" C_RED="" C_RESET=""
+# Keep redirected output stable for scripts; decorate deltas and preserve
+# Git's status palette only when a human is looking at a capable terminal.
+# NO_COLOR is the standard opt-out.
+C_GREEN="" C_RED="" C_RESET="" GIT_STATUS_COLOR="never"
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-dumb}" != "dumb" ]]; then
   C_GREEN=$'\033[32m'
   C_RED=$'\033[31m'
   C_RESET=$'\033[0m'
+  GIT_STATUS_COLOR="always"
 fi
 
 usage() {
@@ -44,7 +46,7 @@ usage: ext <command> [args]
   unlink [mount…|--all] [--force] [--keep-branch]
         Remove mount(s). Refuses dirty/unpushed unless --force. Deletes the
         matching branch in the store when it has no commits beyond the base.
-  status            Host + each mount: branch, dirty, ahead/behind base.
+  status, s          Host + each mount: branch, dirty, ahead/behind base.
   list              Manifest entries and their link state.
   fetch             Fetch host + all canonical stores (parallel).
   pull [--merge]    Fetch, then rebase (or merge) host + mounts onto
@@ -480,7 +482,7 @@ status_base_extra() { # dir base -> divergence summary (no newline)
 }
 
 print_short_branch_status() { # dir
-  git -C "$1" status -sb | sed 's/^/  /'
+  git -C "$1" -c color.status="$GIT_STATUS_COLOR" status -sb | sed 's/^/  /'
 }
 
 cmd_status() {
@@ -993,7 +995,7 @@ main() {
   case "$cmd" in
     -h|--help|help) usage; exit 0 ;;
     -V|--version|version) say "ext $EXT_VERSION"; exit 0 ;;
-    link|unlink|status|list|fetch|pull|push|merge-to|each|relink|doctor|init) ;;
+    link|unlink|status|s|list|fetch|pull|push|merge-to|each|relink|doctor|init) ;;
     *) die "unknown command: $cmd (see 'ext help')" 2 ;;
   esac
   command -v git >/dev/null || die "git is required"
@@ -1021,7 +1023,7 @@ main() {
   case "$cmd" in
     link)     cmd_link "$@" ;;
     unlink)   cmd_unlink "$@" ;;
-    status)   cmd_status "$@" ;;
+    status|s) cmd_status "$@" ;;
     list)     cmd_list "$@" ;;
     fetch)    cmd_fetch "$@" ;;
     pull)     cmd_pull "$@" ;;
